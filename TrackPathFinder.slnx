@@ -1,0 +1,8 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="ConeExtractor/ConeExtractor.vcxproj" Id="b72d81e7-dd3f-46b5-baec-b6c7163ac16e" />
+  <Project Path="TrackPathFinder/TrackPathFinder.vcxproj" Id="dc710132-a662-472c-ac2c-79210ef0c514" />
+</Solution>
