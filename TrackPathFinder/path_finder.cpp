@@ -36,6 +36,20 @@ struct Vector_2 {
     double y;
 };
 
+double find_min_squared_distance(const CGAL::Point_2<K>& target,
+    const std::vector<CGAL::Point_2<K>>& cone_set) {
+
+    double min_dist_sq = std::numeric_limits<double>::max();
+
+    for (const auto& cone : cone_set) {
+        double dist_sq = CGAL::squared_distance(target, cone);
+        if (dist_sq < min_dist_sq) {
+            min_dist_sq = dist_sq;
+        }
+    }
+    return min_dist_sq;
+}
+
 // Berechnet das Skalarprodukt (Dot Product)
 double dot_product(const Vector_2& v1, const Vector_2& v2) {
     return v1.x * v2.x + v1.y * v2.y;
@@ -80,6 +94,7 @@ bool is_midpoint_inside_hull(const std::vector<CGAL::Point_2<K>>& hull_points,
 
     return true; // Der Punkt liegt innerhalb der Hülle oder auf dem Rand.
 }
+
 
 void smooth_path(std::vector<Point>& path, int window_size) {
     if (path.size() < 3 || window_size < 3) return;
@@ -231,14 +246,33 @@ void find_middle_path(const std::string& input_filepath, const std::string& outp
         points_for_dt.push_back(pair.first);
     }
 
+    std::vector<CGAL::Point_2<K>> all_blue_cones;
+    std::vector<CGAL::Point_2<K>> all_yellow_cones;
+
+    for (const auto& pair : point_to_type) {
+        // pair.first ist der Punkt (die Koordinate)
+        // pair.second ist der Typ (0 für blau, 1 für gelb)
+
+        if (pair.second == 0) { // Blauer Kegel
+            all_blue_cones.push_back(pair.first);
+        }
+        else if (pair.second == 1) { // Gelber Kegel
+            all_yellow_cones.push_back(pair.first);
+        }
+    }
+
+    const double MAX_DISTANCE_RATIO_ERROR = 0.12;
+    const double MAX_TRACK_WIDTH = 30.0; // Passen Sie diesen Wert an!
+
     // 2. Delaunay-Triangulation durchführen
+    
     Triangulation dt;
     dt.insert(points_for_dt.begin(), points_for_dt.end());
     std::cout << "Delaunay-Triangulation abgeschlossen. Dreiecke: " << dt.number_of_faces() << "\n";
 
+    
     // 3. und 4. Filtern und Mittelpunkte extrahieren (Kern-Heuristik)
-    std::vector<Point> raw_middle_points;
-
+    std::set<CGAL::Point_2<K>> raw_middle_points_set;
     // Iteriere über die Kanten der Triangulation (Edges)
     for (auto e_it = dt.finite_edges_begin(); e_it != dt.finite_edges_end(); ++e_it) {
         // Holen der Eckpunkte der Kante
@@ -248,14 +282,15 @@ void find_middle_path(const std::string& input_filepath, const std::string& outp
         Point p1 = v1->point();
         Point p2 = v2->point();
 
-        const double MAX_TRACK_WIDTH = 80.0; // Passen Sie diesen Wert an!
+        
         double max_dist_sq = MAX_TRACK_WIDTH * MAX_TRACK_WIDTH;
 
         std::vector<CGAL::Point_2<K>> convex_hull_points;
 
-        CGAL::ch_graham_andrew(points_for_dt.begin(), points_for_dt.end(),
+        /*CGAL::ch_graham_andrew(points_for_dt.begin(), points_for_dt.end(),
             std::back_inserter(convex_hull_points));
-
+        */
+        
         // 1. Distanzprüfung
         // CGAL::squared_distance(p1, p2) berechnet (x1-x2)^2 + (y1-y2)^2
         if (CGAL::squared_distance(p1, p2) >= max_dist_sq) {
@@ -273,12 +308,81 @@ void find_middle_path(const std::string& input_filepath, const std::string& outp
             double mid_y = (p1.y() + p2.y()) / 2.0;
             Point midpoint(mid_x, mid_y);
 
-            if (is_midpoint_inside_hull(convex_hull_points, midpoint))
-            {
-                raw_middle_points.emplace_back(midpoint);
+            /*
+            //if (is_midpoint_inside_hull(convex_hull_points, midpoint) )
+            //{
+            double dist_sq_to_blue = find_min_squared_distance(midpoint, all_blue_cones);
+
+            // B. Berechne die minimale quadratische Distanz zu den gelben Kegeln
+            double dist_sq_to_yellow = find_min_squared_distance(midpoint, all_yellow_cones);
+
+            // Vermeide die Wurzelberechnung, indem wir quadratische Werte verwenden.
+            // Wir prüfen, ob das Verhältnis der Längenquadrate nahe 1 ist.
+
+            // Der Mittelwert der quadrierten Distanzen (zum Normalisieren)
+            double average_sq = (dist_sq_to_blue + dist_sq_to_yellow) / 2.0;
+
+            // Die Differenz zwischen den quadrierten Distanzen
+            double diff_sq = std::abs(dist_sq_to_blue - dist_sq_to_yellow);
+
+            // Prüfen, ob die Differenz im Verhältnis zum Durchschnitt klein genug ist
+            // Dies prüft, ob D(M, Blau) ? D(M, Gelb)
+            if (average_sq > 1e-6) { // Schutz vor Division durch Null
+                double error_ratio = diff_sq / average_sq;
+
+                if (error_ratio <= MAX_DISTANCE_RATIO_ERROR  && dist_sq_to_blue < max_dist_sq && dist_sq_to_yellow < max_dist_sq) {
+                    // Der Mittelpunkt ist zentriert genug, akzeptiere ihn!
+                    raw_middle_points.emplace_back(midpoint);
+                }
+                // else: Mittelpunkt liegt zu nah an einer Seite (schneidet die Spur), verwerfe ihn.
+            }
+
+            //}
+            */
+            //raw_middle_points_set.insert(midpoint);
+        }
+        
+        
+    }
+    
+
+    int anzahl_next = 0;
+
+    for (const auto& blue_cone : all_blue_cones) {
+
+        CGAL::Point_2<K> nearest_yellow_cone;
+        double min_dist_sq = std::numeric_limits<double>::max();
+
+        // 2. Finde den nächsten gelben Nachbarn für den aktuellen blauen Kegel
+        for (const auto& yellow_cone : all_yellow_cones) {
+            double dist_sq = CGAL::squared_distance(blue_cone, yellow_cone);
+
+            // Anwendung eines großzügigen Max-Abstands-Filters HIER
+            if (dist_sq > MAX_TRACK_WIDTH * MAX_TRACK_WIDTH) {
+                continue;
+            }
+
+            if (dist_sq < min_dist_sq) {
+                min_dist_sq = dist_sq;
+                nearest_yellow_cone = yellow_cone;
             }
         }
+
+        // 3. Wenn ein gültiger Nachbar gefunden wurde, generiere den Mittelpunkt
+        if (min_dist_sq != std::numeric_limits<double>::max()) {
+            CGAL::Point_2<K> midpoint = CGAL::midpoint(blue_cone, nearest_yellow_cone);
+
+            anzahl_next++;
+            //std::cout << "Bei Schleife" << anzahl_next << "\n";
+
+            // Optional: Überprüfen Sie, ob dieser Mittelpunkt bereits über die DT gefunden wurde, 
+            // um Duplikate zu vermeiden, und fügen Sie ihn hinzu.
+
+            raw_middle_points_set.insert(midpoint);
+        }
     }
+
+    std::vector<CGAL::Point_2<K>> raw_middle_points(raw_middle_points_set.begin(), raw_middle_points_set.end());
     std::cout << "Gefundene potentielle Mittelpunkte: " << raw_middle_points.size() << "\n";
 
     // 5. Pfad-Folge bestimmen (Glätten und Sortieren)
@@ -301,7 +405,7 @@ void find_middle_path(const std::string& input_filepath, const std::string& outp
     int current_index = find_start_index(raw_middle_points);
 
     if (current_index == -1) {
-        // Dies sollte nicht passieren, wenn path_points.size() >= 1, aber zur Sicherheit
+        // Dies sollte nicht passieren, wenn raw_middle_points.size() >= 1, aber zur Sicherheit
         std::cerr << "FEHLER: Startpunktindex konnte nicht gefunden werden.\n";
         return;
     }
@@ -315,9 +419,9 @@ void find_middle_path(const std::string& input_filepath, const std::string& outp
     //}
 
     // Iteratives Sortieren
-    const double LOCAL_SEARCH_RADIUS_SQ = 20.0 * 20.0;
+    const double LOCAL_SEARCH_RADIUS_SQ = 30.0 * 30.0;
 
-
+    int Fehler = 0;
     // Die robuste WHILE-Schleife: läuft, bis alle Punkte sortiert sind
     while (sorted_path.size() < raw_middle_points.size()) {
 
@@ -364,7 +468,7 @@ void find_middle_path(const std::string& input_filepath, const std::string& outp
 
                 // Berechne gewichtete Distanz: Distanz * (1 + Strafe)
                 // Wenn Winkel schlecht ist, wird die Distanz künstlich vergrößert
-                double weighted_dist_sq = dist_sq * (1.0 + 50.0 * angle_penalty); // 5.0 ist Gewichtungsfaktor!
+                double weighted_dist_sq = dist_sq * (1.0 + 80.0 * angle_penalty); // 5.0 ist Gewichtungsfaktor!
 
                 // 3. Nearest Neighbor Auswahl
                 if (weighted_dist_sq < min_dist_sq) {
@@ -373,6 +477,23 @@ void find_middle_path(const std::string& input_filepath, const std::string& outp
                 }
             }
         }
+
+        /*
+        if (nearest_index == -1) {
+            Fehler = Fehler + 1;
+            for (size_t j = 0; j < raw_middle_points.size(); ++j) {
+                if (!visited[j]) {
+                    double dist_sq = CGAL::squared_distance(p_current, raw_middle_points[j]);
+                    if (dist_sq < min_dist_sq) {
+                        min_dist_sq = dist_sq;
+                        nearest_index = static_cast<int>(j);
+                    }
+                }
+            }
+        }
+        */
+        
+        
 
         
 
@@ -421,7 +542,7 @@ void find_middle_path(const std::string& input_filepath, const std::string& outp
     }
 
     outputFile.close();
-    std::cout << "INFO: Pfad erfolgreich nach " << output_filepath << " geschrieben. Gesamtpunkte: " << sorted_path.size() << "\n";
+    std::cout << "INFO: Pfad erfolgreich nach " << output_filepath << " geschrieben. Gesamtpunkte: " << sorted_path.size() << " Fehler: " << Fehler << "\n";
 }
 
 
