@@ -261,18 +261,19 @@ void find_middle_path(const std::string& input_filepath, const std::string& outp
         }
     }
 
-    const double MAX_DISTANCE_RATIO_ERROR = 0.12;
-    const double MAX_TRACK_WIDTH = 30.0; // Passen Sie diesen Wert an!
+    std::set<CGAL::Point_2<K>> raw_middle_points_set;
 
-    // 2. Delaunay-Triangulation durchführen
-    
+    // Delaunay-triangulation
     Triangulation dt;
     dt.insert(points_for_dt.begin(), points_for_dt.end());
     std::cout << "Delaunay-Triangulation abgeschlossen. Dreiecke: " << dt.number_of_faces() << "\n";
 
-    
+    // Magic numbers - can be configured
+    const double MAX_DISTANCE_RATIO_ERROR = 0.12;
+    const double MAX_TRACK_WIDTH = 30.0; // Passen Sie diesen Wert an!
+
     // 3. und 4. Filtern und Mittelpunkte extrahieren (Kern-Heuristik)
-    std::set<CGAL::Point_2<K>> raw_middle_points_set;
+
     // Iteriere über die Kanten der Triangulation (Edges)
     for (auto e_it = dt.finite_edges_begin(); e_it != dt.finite_edges_end(); ++e_it) {
         // Holen der Eckpunkte der Kante
@@ -281,16 +282,15 @@ void find_middle_path(const std::string& input_filepath, const std::string& outp
 
         Point p1 = v1->point();
         Point p2 = v2->point();
-
+        
         
         double max_dist_sq = MAX_TRACK_WIDTH * MAX_TRACK_WIDTH;
 
         std::vector<CGAL::Point_2<K>> convex_hull_points;
 
-        /*CGAL::ch_graham_andrew(points_for_dt.begin(), points_for_dt.end(),
+        CGAL::ch_graham_andrew(points_for_dt.begin(), points_for_dt.end(),
             std::back_inserter(convex_hull_points));
-        */
-        
+           
         // 1. Distanzprüfung
         // CGAL::squared_distance(p1, p2) berechnet (x1-x2)^2 + (y1-y2)^2
         if (CGAL::squared_distance(p1, p2) >= max_dist_sq) {
@@ -308,9 +308,6 @@ void find_middle_path(const std::string& input_filepath, const std::string& outp
             double mid_y = (p1.y() + p2.y()) / 2.0;
             Point midpoint(mid_x, mid_y);
 
-            /*
-            //if (is_midpoint_inside_hull(convex_hull_points, midpoint) )
-            //{
             double dist_sq_to_blue = find_min_squared_distance(midpoint, all_blue_cones);
 
             // B. Berechne die minimale quadratische Distanz zu den gelben Kegeln
@@ -332,20 +329,15 @@ void find_middle_path(const std::string& input_filepath, const std::string& outp
 
                 if (error_ratio <= MAX_DISTANCE_RATIO_ERROR  && dist_sq_to_blue < max_dist_sq && dist_sq_to_yellow < max_dist_sq) {
                     // Der Mittelpunkt ist zentriert genug, akzeptiere ihn!
-                    raw_middle_points.emplace_back(midpoint);
+                    raw_middle_points_set.insert(midpoint);
                 }
                 // else: Mittelpunkt liegt zu nah an einer Seite (schneidet die Spur), verwerfe ihn.
             }
 
-            //}
-            */
-            //raw_middle_points_set.insert(midpoint);
         }
-        
-        
     }
-    
 
+    /* Next neighbour (alt to delauny)
     int anzahl_next = 0;
 
     for (const auto& blue_cone : all_blue_cones) {
@@ -381,6 +373,7 @@ void find_middle_path(const std::string& input_filepath, const std::string& outp
             raw_middle_points_set.insert(midpoint);
         }
     }
+    */
 
     std::vector<CGAL::Point_2<K>> raw_middle_points(raw_middle_points_set.begin(), raw_middle_points_set.end());
     std::cout << "Gefundene potentielle Mittelpunkte: " << raw_middle_points.size() << "\n";
@@ -412,11 +405,6 @@ void find_middle_path(const std::string& input_filepath, const std::string& outp
 
     sorted_path.push_back(raw_middle_points[current_index]); // <-- HIER wird der erste Punkt gesetzt
     visited[current_index] = true;
-
-    // if (current_index != -1) {
-    //    sorted_path.push_back(raw_middle_points[current_index]);
-    //    visited[current_index] = true;
-    //}
 
     // Iteratives Sortieren
     const double LOCAL_SEARCH_RADIUS_SQ = 30.0 * 30.0;
@@ -492,10 +480,6 @@ void find_middle_path(const std::string& input_filepath, const std::string& outp
             }
         }
         */
-        
-        
-
-        
 
         // FÜGE PUNKT HINZU ODER BRECHE AB
         if (nearest_index != -1) {
