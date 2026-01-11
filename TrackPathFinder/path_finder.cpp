@@ -5,28 +5,25 @@
 #include <cmath>
 #include <map>
 #include <string>
-#include <CGAL/ch_graham_andrew.h>
 #include <algorithm>
 
-// --- CGAL ERFORDERLICHE HEADER ---
-// Hinweis: Die genauen Header hängen von der verwendeten CGAL-Konfiguration ab.
-// Diese sind Beispiele für eine einfache 2D-Triangulation.
+#include <CGAL/ch_graham_andrew.h>
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
-#include <CGAL/Triangulation_2.h>
+#include <CGAL/Delaunay_triangulation_2.h>
 
-// Definiere den CGAL Kernel und die Triangulation
-typedef CGAL::Exact_predicates_inexact_constructions_kernel K;
-typedef CGAL::Triangulation_2<K> Triangulation;
-typedef K::Point_2 Point;
+// Define types for Delaunay (CGAL library)
+typedef CGAL::Exact_predicates_inexact_constructions_kernel Kernel;
+typedef CGAL::Delaunay_triangulation_2<Kernel> Delaunay;
+typedef Delaunay::Point Point;
 
-// Struktur für die eingelesenen Kegeldaten
+// Structure for ConeData with x,y coords and type (left or right)
 struct ConeData {
     double x;
     double y;
-    int type; // 0 = Links (Blau), 1 = Rechts (Gelb)
+    int type; // 0 = Left (Blue), 1 = Right (Yellow)
 };
 
-// Struktur, die den Punkt und seinen Typ speichert (wird als Info an CGAL-Punkt gehängt)
+// Structure to safe type of point (extra info for CGAL point)
 struct ConePointInfo {
     int type;
 };
@@ -36,8 +33,8 @@ struct Vector_2 {
     double y;
 };
 
-double find_min_squared_distance(const CGAL::Point_2<K>& target,
-    const std::vector<CGAL::Point_2<K>>& cone_set) {
+double find_min_squared_distance(const CGAL::Point_2<Kernel>& target,
+    const std::vector<CGAL::Point_2<Kernel>>& cone_set) {
 
     double min_dist_sq = std::numeric_limits<double>::max();
 
@@ -50,16 +47,17 @@ double find_min_squared_distance(const CGAL::Point_2<K>& target,
     return min_dist_sq;
 }
 
-// Berechnet das Skalarprodukt (Dot Product)
+// Calculate dot-product of two points
 double dot_product(const Vector_2& v1, const Vector_2& v2) {
     return v1.x * v2.x + v1.y * v2.y;
 }
 
-// Berechnet die quadratische Länge eines Vektors
+// Squared length of vector
 double squared_length(const Vector_2& v) {
     return v.x * v.x + v.y * v.y;
 }
 
+// dot-product based from coords of points
 double dot_product_coords(double x1, double y1, double x2, double y2) {
     return x1 * x2 + y1 * y2;
 }
@@ -68,94 +66,77 @@ double squared_length_coords(double x, double y) {
     return x * x + y * y;
 }
 
-bool is_midpoint_inside_hull(const std::vector<CGAL::Point_2<K>>& hull_points,
-    const CGAL::Point_2<K>& p)
+// Validate whether midpoint is inside hull/constraint based on orientation.
+bool is_midpoint_inside_hull(const std::vector<CGAL::Point_2<Kernel>>& hull_points,
+    const CGAL::Point_2<Kernel>& p)
 {
     if (hull_points.size() < 3) return false;
 
-    // Wir gehen davon aus, dass die Punkte gegen den Uhrzeigersinn (CCW) geordnet sind.
-    // Für jeden Rand des Polygons muss der Testpunkt p "links" oder "kolinear" sein.
-    // Wenn CGAL die Hülle im Uhrzeigersinn (CW) liefert, müssten wir nach "rechts" prüfen.
-    // Standardmäßig liefert ch_graham_andrew CCW.
-
     for (size_t i = 0; i < hull_points.size(); ++i) {
-        const CGAL::Point_2<K>& p_i = hull_points[i];
-        const CGAL::Point_2<K>& p_next = hull_points[(i + 1) % hull_points.size()];
+        const CGAL::Point_2<Kernel>& p_i = hull_points[i];
+        const CGAL::Point_2<Kernel>& p_next = hull_points[(i + 1) % hull_points.size()];
 
-        // Prüfe die Orientierung: Orientierung von (p_i, p_next, p)
         CGAL::Orientation orientation = CGAL::orientation(p_i, p_next, p);
 
-        // Wenn der Punkt rechts von der Kante liegt, ist er außerhalb der konvexen Hülle.
         if (orientation == CGAL::RIGHT) {
             return false;
         }
-        // CGAL::LEFT und CGAL::COLLINEAR sind akzeptabel.
     }
-
-    return true; // Der Punkt liegt innerhalb der Hülle oder auf dem Rand.
+    return true;
 }
 
-
+// Smooths given path
 void smooth_path(std::vector<Point>& path, int window_size) {
     if (path.size() < 3 || window_size < 3) return;
 
-    // Sicherstellen, dass die Fenstergröße ungerade ist
+    // Make sure window size is odd
     if (window_size % 2 == 0) {
         window_size++;
     }
 
     int half_window = window_size / 2;
-    std::vector<Point> smoothed_path = path; // Kopie des Originalpfads
+    std::vector<Point> smoothed_path = path;
 
-    // Der Loop beginnt nach dem ersten 'half_window' und endet vor dem letzten 'half_window'
+    // Loop begins after first 'half_window' and ends before last 'half_window'
     for (size_t i = half_window; i < path.size() - half_window; ++i) {
         double sum_x = 0.0;
         double sum_y = 0.0;
 
-        // Summiere die Koordinaten im Fenster
         for (int j = -half_window; j <= half_window; ++j) {
             sum_x += path[i + j].x();
             sum_y += path[i + j].y();
         }
 
-        // Berechne den Durchschnitt und speichere ihn in der neuen Kopie
         smoothed_path[i] = Point(sum_x / window_size, sum_y / window_size);
     }
 
-    // Ersetze den Originalpfad durch den geglätteten Pfad
     path = smoothed_path;
 }
 
+// Validate candidate for next point (based on turn degree)
 bool is_acceptable_turn(const Point& p_last, const Point& p_current, const Point& p_candidate) {
 
-    // Vektor des letzten Segments (Pfadrichtung)
     Vector_2 v_current = { p_current.x() - p_last.x(), p_current.y() - p_last.y() };
 
-    // Vektor zum Kandidatenpunkt
     Vector_2 v_next = { p_candidate.x() - p_current.x(), p_candidate.y() - p_current.y() };
 
     double dot_prod = dot_product(v_current, v_next);
 
-    // Schwellenwert für den Winkel (z.B. cos(120 Grad) = -0.5)
-    // Wenn das Skalarprodukt negativ wird, dreht sich der Pfad zurück (> 90 Grad).
-    // Wenn es zu klein ist, ist es ein scharfer Knick.
-    // Ein Wert von 0.25 erzwingt einen Winkel von weniger als ca. 75 Grad.
+    // Magic number for maximum angle
     const double COS_MAX_ANGLE_THRESHOLD = -0.50;
 
-    // Normalisierte Prüfung: V1 * V2 / (|V1| * |V2|) > Schwellenwert
-    // Wir verwenden die quadratischen Längen als Näherung, da die Wurzel teuer ist:
+    // Normalised check: V1 * V2 / (|V1| * |V2|) > Maximum (use of squares as approx to skip root calculation)
     double length_sq_current = squared_length(v_current);
     double length_sq_next = squared_length(v_next);
 
-    // Vermeide Division durch Null für den unwahrscheinlichen Fall, dass die Vektoren Länge Null haben.
+    // Avoid division by 0
     if (length_sq_current < 1e-6 || length_sq_next < 1e-6) {
         return false;
     }
 
-    // Wenn das normalisierte Skalarprodukt unter den Schwellenwert fällt, ist der Winkel zu scharf.
-    // Skalarprodukt / (Länge * Länge) ist der Kosinus des Winkels.
     double cos_angle = dot_prod / std::sqrt(length_sq_current * length_sq_next);
 
+    // If result is too small the angle is too sharp to be accepted.
     return cos_angle > COS_MAX_ANGLE_THRESHOLD;
 }
 
@@ -163,11 +144,9 @@ int find_start_index(const std::vector<Point>& path_points) {
     if (path_points.empty()) return -1;
 
     int start_index = 0;
-    // Verwenden Sie .x() statt .first
     double min_x = path_points[0].x();
 
     for (size_t i = 1; i < path_points.size(); ++i) {
-        // Verwenden Sie .x() statt .first
         if (path_points[i].x() < min_x) {
             min_x = path_points[i].x();
             start_index = i;
@@ -176,15 +155,15 @@ int find_start_index(const std::vector<Point>& path_points) {
     return start_index;
 }
 
-// --- Kernlogik für die Pfadbestimmung ---
+// Reads data from file (needs to be changed later to live in-out system) and calculates the middle path
 void find_middle_path(const std::string& input_filepath, const std::string& output_filepath) {
-    std::cout << "Starte Pfadfinder-Algorithmus...\n";
+    std::cout << "Begin pathfinding algorithm ...\n";
     std::vector<ConeData> cones;
 
-    // 1. Daten einlesen (Cone-Positionen)
+    // Read cone positions as input (exchanged later for live-feed from Ros Node)
     std::ifstream inputFile(input_filepath);
     if (!inputFile.is_open()) {
-        std::cerr << "Fehler: Eingabedatei " << input_filepath << " nicht gefunden.\n";
+        std::cerr << "ERROR: Input_file " << input_filepath << " not found.\n";
         return;
     }
 
@@ -194,12 +173,12 @@ void find_middle_path(const std::string& input_filepath, const std::string& outp
         line_number++;
     }
     else {
-        std::cerr << "FEHLER: Cones-Datei ist leer.\n";
+        std::cerr << "ERROR: cones-file empty.\n";
         return;
     }
     std::vector<std::pair<Point, ConePointInfo>> points_with_info;
 
-    // Hilfsstruktur zur Speicherung der Cone-Infos
+    // Helping structure to get point (left, right) of point
     std::map<Point, int> point_to_type;
 
     while (std::getline(inputFile, line)) {
@@ -216,21 +195,21 @@ void find_middle_path(const std::string& input_filepath, const std::string& outp
         int value_count = 0;
 
         try {
-            // Die Spalten in cones.csv sind: x_cone, y_cone, type
+            // Columns in cones.csv are: x_cone, y_cone, type
             if (std::getline(ss, segment, ',')) { cd.x = std::stod(segment); value_count++; }
             if (std::getline(ss, segment, ',')) { cd.y = std::stod(segment); value_count++; }
-            if (std::getline(ss, segment, ',')) { cd.type = std::stoi(segment); value_count++; } // Hier muss stoi verwendet werden
+            if (std::getline(ss, segment, ',')) { cd.type = std::stoi(segment); value_count++; }
 
+            // Add point if read correctly
             if (value_count == 3) {
-                cones.push_back(cd); // HIER wird 'cones' befüllt!
+                cones.push_back(cd);
             }
             else {
-                std::cerr << "WARNUNG PathFinder: Nur " << value_count << " von 3 Spalten in Zeile " << line_number << " gefunden.\n";
+                std::cerr << "WARNING PathFinder: Only " << value_count << " of 3 columns in line " << line_number << " found.\n";
             }
         }
         catch (const std::exception& e) {
-            // Fangt alle Konvertierungsfehler (stod oder stoi) ab
-            std::cerr << "FEHLER PathFinder: Konvertierung in Zeile " << line_number << " fehlgeschlagen: " << e.what() << "\n";
+            std::cerr << "ERROR PathFinder: Conversion in line " << line_number << " failed: " << e.what() << "\n";
         }
         Point p(cd.x, cd.y);
         point_to_type[p] = cd.type;
@@ -238,179 +217,108 @@ void find_middle_path(const std::string& input_filepath, const std::string& outp
     inputFile.close();
 
 
-
-    // Die Triangulation kann nur Punkte, keine Zusatzinformationen, direkt speichern.
-    // Wir verwenden die map, um den Typ eines Punktes nach der Triangulation abzufragen.
+    // Triangulation only safes coordinate data, not cone types
+    // Use map to get cone type after triangulation
     std::vector<Point> points_for_dt;
     for (const auto& pair : point_to_type) {
         points_for_dt.push_back(pair.first);
     }
 
-    std::vector<CGAL::Point_2<K>> all_blue_cones;
-    std::vector<CGAL::Point_2<K>> all_yellow_cones;
+    std::vector<CGAL::Point_2<Kernel>> all_blue_cones;
+    std::vector<CGAL::Point_2<Kernel>> all_yellow_cones;
 
     for (const auto& pair : point_to_type) {
-        // pair.first ist der Punkt (die Koordinate)
-        // pair.second ist der Typ (0 für blau, 1 für gelb)
+        // pair.first is point (coords)
+        // pair.second is type (0 for blue/left, 1 for yellow/right)
 
-        if (pair.second == 0) { // Blauer Kegel
+        if (pair.second == 0) { 
             all_blue_cones.push_back(pair.first);
         }
-        else if (pair.second == 1) { // Gelber Kegel
+        else if (pair.second == 1) {
             all_yellow_cones.push_back(pair.first);
         }
     }
 
-    std::set<CGAL::Point_2<K>> raw_middle_points_set;
+    std::set<CGAL::Point_2<Kernel>> raw_middle_points_set;
 
     // Delaunay-triangulation
-    Triangulation dt;
+    Delaunay dt;
     dt.insert(points_for_dt.begin(), points_for_dt.end());
-    std::cout << "Delaunay-Triangulation abgeschlossen. Dreiecke: " << dt.number_of_faces() << "\n";
+    std::cout << "Delaunay-Triangulation finished. Triangles: " << dt.number_of_faces() << "\n";
 
-    // Magic numbers - can be configured
+    // Magic numbers for configuration
     const double MAX_DISTANCE_RATIO_ERROR = 0.12;
-    const double MAX_TRACK_WIDTH = 30.0; // Passen Sie diesen Wert an!
+    const double MAX_TRACK_WIDTH = 30.0; // Adjustable
 
-    // 3. und 4. Filtern und Mittelpunkte extrahieren (Kern-Heuristik)
-
-    // Iteriere über die Kanten der Triangulation (Edges)
+    // Iterate over edges of triangulation
     for (auto e_it = dt.finite_edges_begin(); e_it != dt.finite_edges_end(); ++e_it) {
-        // Holen der Eckpunkte der Kante
-        Triangulation::Vertex_handle v1 = e_it->first->vertex(dt.cw(e_it->second));
-        Triangulation::Vertex_handle v2 = e_it->first->vertex(e_it->second);
+        Delaunay::Vertex_handle v1 = e_it->first->vertex(dt.cw(e_it->second));
+        Delaunay::Vertex_handle v2 = e_it->first->vertex(e_it->second);
 
         Point p1 = v1->point();
         Point p2 = v2->point();
         
-        
         double max_dist_sq = MAX_TRACK_WIDTH * MAX_TRACK_WIDTH;
 
-        std::vector<CGAL::Point_2<K>> convex_hull_points;
+        std::vector<CGAL::Point_2<Kernel>> convex_hull_points;
 
         CGAL::ch_graham_andrew(points_for_dt.begin(), points_for_dt.end(),
             std::back_inserter(convex_hull_points));
            
-        // 1. Distanzprüfung
-        // CGAL::squared_distance(p1, p2) berechnet (x1-x2)^2 + (y1-y2)^2
+        // Check if distance is acceptable (avoid big jumps between points)
         if (CGAL::squared_distance(p1, p2) >= max_dist_sq) {
-            continue; // Kante ist zu lang (wilder Sprung), ignoriere sie
+            continue;
         }
 
-        // Suche den Typ der beiden Punkte in unserer Map (Dies ist die Heuristik!)
         int type1 = point_to_type[p1];
         int type2 = point_to_type[p2];
 
-        // Wir suchen nur Kanten, die einen blauen (0) und einen gelben (1) Kegel verbinden.
+        // Only looking for vertex connecting left and right (blue and yellow) cone
         if ((type1 == 0 && type2 == 1) || (type1 == 1 && type2 == 0)) {
-            // Berechne den Mittelpunkt der Kante
             double mid_x = (p1.x() + p2.x()) / 2.0;
             double mid_y = (p1.y() + p2.y()) / 2.0;
             Point midpoint(mid_x, mid_y);
 
             double dist_sq_to_blue = find_min_squared_distance(midpoint, all_blue_cones);
 
-            // B. Berechne die minimale quadratische Distanz zu den gelben Kegeln
             double dist_sq_to_yellow = find_min_squared_distance(midpoint, all_yellow_cones);
 
-            // Vermeide die Wurzelberechnung, indem wir quadratische Werte verwenden.
-            // Wir prüfen, ob das Verhältnis der Längenquadrate nahe 1 ist.
-
-            // Der Mittelwert der quadrierten Distanzen (zum Normalisieren)
             double average_sq = (dist_sq_to_blue + dist_sq_to_yellow) / 2.0;
 
-            // Die Differenz zwischen den quadrierten Distanzen
             double diff_sq = std::abs(dist_sq_to_blue - dist_sq_to_yellow);
 
-            // Prüfen, ob die Differenz im Verhältnis zum Durchschnitt klein genug ist
-            // Dies prüft, ob D(M, Blau) ? D(M, Gelb)
-            if (average_sq > 1e-6) { // Schutz vor Division durch Null
+            // Check if distance between left and right cone is small enough
+            if (average_sq > 0) {
                 double error_ratio = diff_sq / average_sq;
 
                 if (error_ratio <= MAX_DISTANCE_RATIO_ERROR  && dist_sq_to_blue < max_dist_sq && dist_sq_to_yellow < max_dist_sq) {
-                    // Der Mittelpunkt ist zentriert genug, akzeptiere ihn!
                     raw_middle_points_set.insert(midpoint);
                 }
-                // else: Mittelpunkt liegt zu nah an einer Seite (schneidet die Spur), verwerfe ihn.
             }
 
         }
     }
 
-    /* Next neighbour (alt to delauny)
-    int anzahl_next = 0;
+    std::vector<CGAL::Point_2<Kernel>> raw_middle_points(raw_middle_points_set.begin(), raw_middle_points_set.end());
+    std::cout << "Potential middle points found: " << raw_middle_points.size() << "\n";
 
-    for (const auto& blue_cone : all_blue_cones) {
-
-        CGAL::Point_2<K> nearest_yellow_cone;
-        double min_dist_sq = std::numeric_limits<double>::max();
-
-        // 2. Finde den nächsten gelben Nachbarn für den aktuellen blauen Kegel
-        for (const auto& yellow_cone : all_yellow_cones) {
-            double dist_sq = CGAL::squared_distance(blue_cone, yellow_cone);
-
-            // Anwendung eines großzügigen Max-Abstands-Filters HIER
-            if (dist_sq > MAX_TRACK_WIDTH * MAX_TRACK_WIDTH) {
-                continue;
-            }
-
-            if (dist_sq < min_dist_sq) {
-                min_dist_sq = dist_sq;
-                nearest_yellow_cone = yellow_cone;
-            }
-        }
-
-        // 3. Wenn ein gültiger Nachbar gefunden wurde, generiere den Mittelpunkt
-        if (min_dist_sq != std::numeric_limits<double>::max()) {
-            CGAL::Point_2<K> midpoint = CGAL::midpoint(blue_cone, nearest_yellow_cone);
-
-            anzahl_next++;
-            //std::cout << "Bei Schleife" << anzahl_next << "\n";
-
-            // Optional: Überprüfen Sie, ob dieser Mittelpunkt bereits über die DT gefunden wurde, 
-            // um Duplikate zu vermeiden, und fügen Sie ihn hinzu.
-
-            raw_middle_points_set.insert(midpoint);
-        }
-    }
-    */
-
-    std::vector<CGAL::Point_2<K>> raw_middle_points(raw_middle_points_set.begin(), raw_middle_points_set.end());
-    std::cout << "Gefundene potentielle Mittelpunkte: " << raw_middle_points.size() << "\n";
-
-    // 5. Pfad-Folge bestimmen (Glätten und Sortieren)
-    // HIER WIRD EINE ZUSÄTZLICHE HEURISTIK BENÖTIGT, 
-    // um die raw_middle_points in die korrekte Reihenfolge zu bringen (z.B. mittels Nearest-Neighbor-Search oder Graph-Traversal).
-    // Der Einfachheit halber verwenden wir hier die Rohdaten.
+    // Determine order of points (potentially has to be adjusted for live-feed)
     if (raw_middle_points.empty()) {
-        std::cerr << "WARNUNG: Es wurden keine Pfadpunkte generiert.\n";
+        std::cerr << "ERROR: No path points generated.\n";
         return;
-    }
-
-    if (raw_middle_points.size() < 1) {
-        std::cerr << "WARNUNG: Es wurden keine Pfadpunkte fuer die Sortierung generiert.\n"; return;
     }
 
     std::vector<Point> sorted_path;
     std::vector<bool> visited(raw_middle_points.size(), false);
 
-    // Startpunkt finden
     int current_index = find_start_index(raw_middle_points);
 
-    if (current_index == -1) {
-        // Dies sollte nicht passieren, wenn raw_middle_points.size() >= 1, aber zur Sicherheit
-        std::cerr << "FEHLER: Startpunktindex konnte nicht gefunden werden.\n";
-        return;
-    }
-
-    sorted_path.push_back(raw_middle_points[current_index]); // <-- HIER wird der erste Punkt gesetzt
+    sorted_path.push_back(raw_middle_points[current_index]);
     visited[current_index] = true;
 
-    // Iteratives Sortieren
     const double LOCAL_SEARCH_RADIUS_SQ = 30.0 * 30.0;
 
-    int Fehler = 0;
-    // Die robuste WHILE-Schleife: läuft, bis alle Punkte sortiert sind
+    int error_rate = 0;
     while (sorted_path.size() < raw_middle_points.size()) {
 
         int nearest_index = -1;
@@ -418,7 +326,7 @@ void find_middle_path(const std::string& input_filepath, const std::string& outp
 
         const Point& p_current = sorted_path.back();
 
-        // p_last ist der vorletzte Punkt, nur wenn es mindestens 2 Punkte in sorted_path gibt
+        // penultimate point
         const Point& p_last = (sorted_path.size() > 1) ? sorted_path[sorted_path.size() - 2] : p_current;
 
         for (size_t j = 0; j < raw_middle_points.size(); ++j) {
@@ -426,20 +334,16 @@ void find_middle_path(const std::string& input_filepath, const std::string& outp
 
                 double dist_sq = CGAL::squared_distance(p_current, raw_middle_points[j]);
 
-                // 1. Lokale Suche (schneller Filter)
+                // Filter by local distance
                 if (dist_sq > LOCAL_SEARCH_RADIUS_SQ) {
                     continue;
                 }
 
-                // 2. Richtungsprüfung (Ab dem zweiten Punkt)
                 double dx_current = p_current.x() - p_last.x();
                 double dy_current = p_current.y() - p_last.y();
                 double dx_next = raw_middle_points[j].x() - p_current.x();
                 double dy_next = raw_middle_points[j].y() - p_current.y();
 
-                
-
-                // Der Kosinus des Winkels: 1.0 = perfekt gerade, -1.0 = perfekt rückwärts
                 double length_sq_current = squared_length_coords(dx_current, dy_current);
                 double length_sq_next = squared_length_coords(dx_next, dy_next);
 
@@ -447,28 +351,28 @@ void find_middle_path(const std::string& input_filepath, const std::string& outp
                 if (sorted_path.size() > 1 && length_sq_current > 1e-6 && length_sq_next > 1e-6) {
                     double dot_prod = dot_product_coords(dx_current, dy_current, dx_next, dy_next);
                     cos_angle = dot_prod / std::sqrt(length_sq_current * length_sq_next);
-
                 }
 
-                // Straffaktor: Bestraft starke Knicke und belohnt gerade Linien
-                // (1 - cos_angle) ist 0 bei gerader Linie und 2 bei Rückwärtsbewegung
+                // Penalty for sharp angles based on angle's cosine
                 double angle_penalty = 1.0 - cos_angle;
 
-                // Berechne gewichtete Distanz: Distanz * (1 + Strafe)
-                // Wenn Winkel schlecht ist, wird die Distanz künstlich vergrößert
-                double weighted_dist_sq = dist_sq * (1.0 + 80.0 * angle_penalty); // 5.0 ist Gewichtungsfaktor!
+                // Magic number used to weight angle penalty
+                const double weight_factor = 80.0;
 
-                // 3. Nearest Neighbor Auswahl
+                // Calculate distance weighted by angle's sharpness
+                double weighted_dist_sq = dist_sq * (1.0 + weight_factor * angle_penalty);
+
+                // Choice for best neighbouring edge
                 if (weighted_dist_sq < min_dist_sq) {
                     min_dist_sq = weighted_dist_sq;
                     nearest_index = j;
                 }
             }
         }
-
-        /*
+        
+        // Backup behaviour if no fitting neighbouring edge was found
         if (nearest_index == -1) {
-            Fehler = Fehler + 1;
+            error_rate = error_rate + 1;
             for (size_t j = 0; j < raw_middle_points.size(); ++j) {
                 if (!visited[j]) {
                     double dist_sq = CGAL::squared_distance(p_current, raw_middle_points[j]);
@@ -479,42 +383,39 @@ void find_middle_path(const std::string& input_filepath, const std::string& outp
                 }
             }
         }
-        */
 
-        // FÜGE PUNKT HINZU ODER BRECHE AB
         if (nearest_index != -1) {
             sorted_path.push_back(raw_middle_points[nearest_index]);
             visited[nearest_index] = true;
         }
         else {
-            // Abbruch, wenn kein geeigneter Nachbar mehr gefunden wird (Ende des Pfades)
-            std::cerr << "WARNUNG: Nächster Nachbar konnte nicht gefunden werden. Sortierung abgebrochen bei " << sorted_path.size() << " Punkten.\n";
+            std::cerr << "WARNING: No valid next neighbour found. Exit sort with " << sorted_path.size() << " points.\n";
             break;
         }
     }
 
     if (!sorted_path.empty()) {
         const Point& last_p = sorted_path.back();
-        std::cerr << "DEBUG: Letzter gefundener Punkt bei X=" << last_p.x()
-            << ", Y=" << last_p.y() << ". Sortierung abgebrochen.\n";
+        std::cerr << "DEBUG: Last found point at X=" << last_p.x()
+            << ", Y=" << last_p.y() << ". Sorting exited.\n";
     }
 
     if (sorted_path.empty()) {
-        std::cerr << "FEHLER: Der sortierte Pfad ist leer. Keine Datei geschrieben.\n";
+        std::cerr << "ERROR: Sorting path empty. No file written.\n";
         return;
     }
 
     std::ofstream outputFile(output_filepath);
 
     if (!outputFile.is_open()) {
-        std::cerr << "FEHLER: Konnte Ausgabedatei (" << output_filepath << ") nicht zum Schreiben öffnen.\n";
+        std::cerr << "ERROR: Couldn't open output file (" << output_filepath << ") to write.\n";
         return;
     }
 
     const int SMOOTHING_WINDOW = 5;
 
     smooth_path(sorted_path, SMOOTHING_WINDOW);
-    std::cout << "INFO: Pfad geglättet mit Fenstergröße " << SMOOTHING_WINDOW << ".\n";
+    std::cout << "INFO: Path smoothend with window " << SMOOTHING_WINDOW << ".\n";
 
     // Header-Zeile schreiben
     outputFile << "x_path,y_path\n";
@@ -526,13 +427,13 @@ void find_middle_path(const std::string& input_filepath, const std::string& outp
     }
 
     outputFile.close();
-    std::cout << "INFO: Pfad erfolgreich nach " << output_filepath << " geschrieben. Gesamtpunkte: " << sorted_path.size() << " Fehler: " << Fehler << "\n";
+    std::cout << "INFO: path successfully written to " << output_filepath << ". Total points: " << sorted_path.size() << " Error: " << error_rate << "\n";
 }
 
 
 int main(int argc, char* argv[]) {
     if (argc != 3) {
-        std::cerr << "Verwendung: ./path_finder <input_cones_file> <output_path_file>\n";
+        std::cerr << "Usage: ./path_finder <input_cones_file> <output_path_file>\n";
         return 1;
     }
     find_middle_path(argv[1], argv[2]);
