@@ -246,6 +246,25 @@ void find_middle_path(const std::string& input_filepath, const std::string& outp
     dt.insert(points_for_dt.begin(), points_for_dt.end());
     std::cout << "Delaunay-Triangulation finished. Triangles: " << dt.number_of_faces() << "\n";
 
+	// Export edges for debugging
+    double max_edge_length = 15.0; // Schwellenwert in Metern (anpassen!)
+    double max_sq_dist = max_edge_length * max_edge_length;
+
+    std::ofstream edge_file("filtered_edges.csv");
+    edge_file << "x1,y1,x2,y2\n";
+
+    for (auto eit = dt.finite_edges_begin(); eit != dt.finite_edges_end(); ++eit) {
+        // Hol dir die Segmente (Verbindungslinien) der Kante
+        auto seg = dt.segment(eit);
+
+        // CGAL nutzt oft quadrierte Distanzen (schneller, da kein Wurzelziehen)
+        if (CGAL::squared_distance(seg.source(), seg.target()) <= max_sq_dist) {
+            edge_file << seg.source().x() << "," << seg.source().y() << ","
+                << seg.target().x() << "," << seg.target().y() << "\n";
+        }
+    }
+    edge_file.close();
+
     // Magic numbers for configuration
     const double MAX_DISTANCE_RATIO_ERROR = 0.12;
     const double MAX_TRACK_WIDTH = 30.0; // Adjustable
