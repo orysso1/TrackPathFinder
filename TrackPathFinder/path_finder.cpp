@@ -281,8 +281,6 @@ void find_middle_path(const std::string& input_filepath, const std::string& outp
 
         std::vector<CGAL::Point_2<Kernel>> convex_hull_points;
 
-        CGAL::ch_graham_andrew(points_for_dt.begin(), points_for_dt.end(),
-            std::back_inserter(convex_hull_points));
            
         // Check if distance is acceptable (avoid big jumps between points)
         if (CGAL::squared_distance(p1, p2) >= max_dist_sq) {
